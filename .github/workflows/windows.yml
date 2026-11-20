@@ -6,13 +6,19 @@ on:
   pull_request:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag of the published Windows package
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   test:
-    if: github.event_name != 'release'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -27,17 +33,19 @@ jobs:
       - name: Test without offline models
         run: .venv/Scripts/python.exe -m pytest -q -m "not slow"
   portable:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
     steps:
       - name: Download and extract the published Windows package
         run: |
-          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'document-translator-*-windows-x64.zip' --dir $env:RUNNER_TEMP
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'document-translator-*-windows-x64.zip' --pattern 'SHA256SUMS.txt' --dir $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
           $archive = Get-ChildItem $env:RUNNER_TEMP -Filter 'document-translator-*-windows-x64.zip' | Select-Object -First 1
+          $expected = ((Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'SHA256SUMS.txt') -Raw) -split '\s+')[0]
+          if ((Get-FileHash -LiteralPath $archive.FullName).Hash -ne $expected) { throw 'Release checksum mismatch' }
           $destination = Join-Path $env:RUNNER_TEMP 'portable'
           Expand-Archive -LiteralPath $archive.FullName -DestinationPath $destination
           $exe = Get-ChildItem -LiteralPath $destination -Recurse -Filter '翻译工具.exe' | Select-Object -First 1
@@ -55,8 +63,21 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $package '样例/示例-英文报告.docx') -Destination (Join-Path $trial.FullName 'input.docx')
           $env:TRANSLATOR_DATA_DIR = Join-Path $trial.FullName 'runtime'
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-          $process = Start-Process -FilePath $env:PORTABLE_EXE -ArgumentList '--offline', '--convert', 'input.docx' -WorkingDirectory $trial.FullName -WindowStyle Hidden -PassThru
-          if (-not $process.WaitForExit(180000) -or $process.ExitCode -ne 0) { throw 'Portable trial failed' }
+          $launch = [Diagnostics.ProcessStartInfo]::new($env:PORTABLE_EXE)
+          $launch.WorkingDirectory = $trial.FullName
+          $launch.UseShellExecute = $false
+          $launch.CreateNoWindow = $true
+          $launch.RedirectStandardOutput = $true
+          $launch.RedirectStandardError = $true
+          foreach ($arg in @('--offline', '--convert', 'input.docx')) { $launch.ArgumentList.Add($arg) }
+          $process = [Diagnostics.Process]::Start($launch)
+          $stdout = $process.StandardOutput.ReadToEndAsync()
+          $stderr = $process.StandardError.ReadToEndAsync()
+          if (-not $process.WaitForExit(180000)) {
+            $process.Kill()
+            throw 'Portable trial timed out'
+          }
+          if ($process.ExitCode -ne 0) { throw "$($stdout.Result)`n$($stderr.Result)" }
           $output = Join-Path $trial.FullName 'input_双语.docx'
           if (-not (Test-Path -LiteralPath $output)) { throw 'Translated DOCX missing' }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
