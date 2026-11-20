@@ -83,6 +83,20 @@ def test_modelless_package_is_not_blocked_by_the_model_line():
     assert any("翻译失败" in p for p in blocked), blocked
 
 
+def test_offline_selftest_without_models_skips_trial_and_hides_install_path(tmp_path, monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "APP_DIR", tmp_path)
+    monkeypatch.setattr(app, "OFFLINE", True)
+    assert app._selftest() == 0
+
+    report = (tmp_path / "自检结果.txt").read_text(encoding="utf-8")
+    assert "离线模型: 缺失" in report
+    assert "试译: 已跳过" in report
+    assert str(tmp_path) not in report
+    assert vd.selftest_problems(parse(report), expect_models=False, version=f"v{app.VERSION}") == []
+
+
 @pytest.mark.parametrize(
     "value, want",
     [(None, "utf-8"), ("utf-8", "utf-8"), ("UTF8", "utf-8"), ("cp65001", "utf-8"),

@@ -4014,9 +4014,9 @@ def _list_terms() -> int:
 
 
 def _selftest() -> int:
-    """免安装版自检：不开界面，试译一句固定文本，结果写到程序目录的「自检结果.txt」。
-    分发给同事后打不开或翻不了，先跑自检，把这份文件发回来就能定位。"""
+    """检查组件并试译固定文本，将结果写到程序目录的「自检结果.txt」。"""
     from core.heading_terms import USER_FILE
+    from core.local_engines import MarianEngine
 
     # 模式文字与试译用的档位都问登记表：--offline / --paid / --local-llm /
     # --custom 四个开关先合成一个档位，组合冲突（如 --paid 配 --local-llm）
@@ -4029,14 +4029,14 @@ def _selftest() -> int:
         print(str(exc))
         return 2
     mode_text = engine_registry.mode_text(selftest_tier)
+    model_dir = APP_DIR / "models" / "opus-mt-en-zh-ct2"
+    has_offline_model = MarianEngine(model_dir).available()
     lines = [
         f"版本: v{VERSION}",
         f"模式: {mode_text}",
-        f"目录: {APP_DIR}",
         f"术语表: {'已找到' if USER_FILE.is_file() else '缺失'}",
         f"   └ {glossary_intro() or '无条目'}",
-        "离线模型: "
-        + ("已找到" if (APP_DIR / "models" / "opus-mt-en-zh-ct2" / "model.bin").is_file() else "缺失"),
+        f"离线模型: {'已找到' if has_offline_model else '缺失'}",
     ]
     for module in (
         "pymupdf",
@@ -4125,21 +4125,24 @@ def _selftest() -> int:
         except Exception as exc:
             lines.append(f"自托管服务: 探测失败（{type(exc).__name__}）")
     probe = "Chapter 1. The future of artificial intelligence in education."
-    try:
-        if OFFLINE:
-            from core.local_translator import LocalTranslator
+    if OFFLINE and not has_offline_model:
+        lines.append("试译: 已跳过，请按《保密模式说明.txt》安装英译中离线模型。")
+    else:
+        try:
+            if OFFLINE:
+                from core.local_translator import LocalTranslator
 
-            translator = LocalTranslator(log=lines.append, style=CLI_STYLE)
-        elif paid_translator is not None:
-            translator = paid_translator
-        elif custom_translator is not None:
-            translator = custom_translator
-        else:
-            translator = Translator(log=lines.append, style=CLI_STYLE)
-        lines.append(f"试译: {probe}")
-        lines.append(f"结果: {translator.translate_texts([probe])[0]}")
-    except Exception as exc:
-        lines.append(f"翻译失败: {type(exc).__name__}: {exc}")
+                translator = LocalTranslator(log=lines.append, style=CLI_STYLE)
+            elif paid_translator is not None:
+                translator = paid_translator
+            elif custom_translator is not None:
+                translator = custom_translator
+            else:
+                translator = Translator(log=lines.append, style=CLI_STYLE)
+            lines.append(f"试译: {probe}")
+            lines.append(f"结果: {translator.translate_texts([probe])[0]}")
+        except Exception as exc:
+            lines.append(f"翻译失败: {type(exc).__name__}: {exc}")
     (APP_DIR / "自检结果.txt").write_text("\n".join(lines), encoding="utf-8")
     return 0
 
