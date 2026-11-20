@@ -1,0 +1,28 @@
+# -*- coding: utf-8 -*-
+# 文档翻译工具 · 依赖清单
+# 安装：python -m pip install -r requirements.txt
+#
+# 升级依赖后，请回归中文路径下的离线模型加载和在线通道。
+
+ctranslate2==4.8.3
+sentencepiece==0.2.2
+langdetect==1.0.9
+python-docx==1.2.0
+pymupdf==2.0
+rapidocr-onnxruntime==1.4.4
+opencv-python==5.0.0.93
+pillow==13.0.0
+requests==2.34.2
+tkinterdnd2==0.6.4
+wordninja==2.0.0
+psutil==7.2.2
+pywin32==312
+
+# PPT 支持（core\ppt_translator.py 已实现，复用同一套术语表/缓存/熔断）
+python-pptx==1.0.2
+
+# Galgame 脚本前端：T++ 表格读写（core\script_tpp.py）+ Excel 文档翻译
+openpyxl==3.1.5
+
+# 仅开发/测试需要，免安装包不需要
+pytest==8.3.4

@@ -1,0 +1,69 @@
+name: Windows tests
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name != 'release'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Create environment and install dependencies
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install -r requirements.txt
+      - name: Test without offline models
+        run: .venv/Scripts/python.exe -m pytest -q -m "not slow"
+  portable:
+    if: github.event_name == 'release'
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Download and extract the published Windows package
+        run: |
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'document-translator-*-windows-x64.zip' --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $archive = Get-ChildItem $env:RUNNER_TEMP -Filter 'document-translator-*-windows-x64.zip' | Select-Object -First 1
+          $destination = Join-Path $env:RUNNER_TEMP 'portable'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $destination
+          $exe = Get-ChildItem -LiteralPath $destination -Recurse -Filter '翻译工具.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'EXE missing from the archive' }
+          "PORTABLE_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+      - name: Trial translation from an isolated directory
+        run: |
+          $package = Split-Path $env:PORTABLE_EXE
+          $model = New-Item -ItemType Directory -Path (Join-Path $package 'models/opus-mt-en-zh-ct2') -Force
+          $source = 'https://huggingface.co/gaudi/opus-mt-en-zh-ctranslate2/resolve/dcd22168f08b99dd34c62bc2195e31dc2f04e90b'
+          foreach ($name in @('config.json', 'model.bin', 'shared_vocabulary.json', 'source.spm', 'target.spm')) {
+            Invoke-WebRequest -Uri "$source/$name" -OutFile (Join-Path $model.FullName $name) -TimeoutSec 240
+          }
+          $trial = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'trial')
+          Copy-Item -LiteralPath (Join-Path $package '样例/示例-英文报告.docx') -Destination (Join-Path $trial.FullName 'input.docx')
+          $env:TRANSLATOR_DATA_DIR = Join-Path $trial.FullName 'runtime'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $process = Start-Process -FilePath $env:PORTABLE_EXE -ArgumentList '--offline', '--convert', 'input.docx' -WorkingDirectory $trial.FullName -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(180000) -or $process.ExitCode -ne 0) { throw 'Portable trial failed' }
+          $output = Join-Path $trial.FullName 'input_双语.docx'
+          if (-not (Test-Path -LiteralPath $output)) { throw 'Translated DOCX missing' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($output)
+          try {
+            $reader = [IO.StreamReader]::new($zip.GetEntry('word/document.xml').Open())
+            if ($reader.ReadToEnd() -notmatch '人工智能') { throw 'Translated text missing' }
+          } finally {
+            if ($reader) { $reader.Dispose() }
+            $zip.Dispose()
+          }
