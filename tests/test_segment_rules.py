@@ -316,6 +316,7 @@ def test_broken_rule_file_never_blocks_the_run(tmp_path, monkeypatch, capsys):
     assert segment_rules.active().is_default
 
 
+@pytest.mark.slow
 def test_console_codepage_cannot_break_the_cli_report(tmp_path):
     """回显里带 GBK 装不下的字符时，报告照样打完、退码照样 0。
 

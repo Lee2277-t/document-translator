@@ -190,6 +190,7 @@ def _placeholder(tmp_path) -> Path:
     return sample
 
 
+@pytest.mark.slow
 def test_pipeline_output_is_strict_utf8_and_keeps_the_rangle(tmp_path):
     """重定向出去的字节必须是 UTF-8，`›` 原样在场、不再写成 \\u203a。
 
@@ -205,6 +206,7 @@ def test_pipeline_output_is_strict_utf8_and_keeps_the_rangle(tmp_path):
     assert "\\u203a" not in out
 
 
+@pytest.mark.slow
 def test_explicit_gbk_still_wins_and_only_degrades_that_one_char(tmp_path):
     """用户点名 GBK 时保持 GBK：`›` 降级成 \\u203a 写法，但成品照常、退码照常 0。"""
     rules, sample = _rangle_rules(tmp_path), _placeholder(tmp_path)
